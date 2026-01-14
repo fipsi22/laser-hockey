@@ -36,28 +36,48 @@ class DQNAgent:
         self._observation_space = observation_space
         self._action_space = action_space
         self._config = {
-            "eps": 0.05, "discount": 0.95, "buffer_size": int(1e5),
+            "eps": 0.5, "discount": 0.95, "buffer_size": int(1e5),
             "batch_size": 128, "learning_rate": 0.0002,
             "update_target_every": 20, "use_target_net": True,
-            "use_double_dqn": True
+            "use_double_dqn": True, "use_noisy_linear": True,
+            "hidden_layers": [265, 265], "tau": 0.005, "use_soft_update": True
         }
         self._config.update(userconfig)
+        self.use_noisy = self._config.get("use_noisy_linear", False)
         self.buffer = mem.Memory(max_size=self._config["buffer_size"])
 
-        self.Q = DuelingQNetwork(observation_space.shape[0], action_space.n, hidden_layers=[128, 128],
-                                 activation="ReLu", use_noisy_linear=self._config.get("use_noisy_linear", False))
-        self.Q_target = DuelingQNetwork(observation_space.shape[0], action_space.n, hidden_layers=[128, 128],
-                                        activation="ReLu", use_noisy_linear=self._config.get("use_noisy_linear", False))
+        self.Q = DuelingQNetwork(observation_space.shape[0], action_space.n,
+                                 hidden_layers=self._config["hidden_layers"],
+                                 activation="ReLu", use_noisy_linear=self.use_noisy)
+        self.Q_target = DuelingQNetwork(observation_space.shape[0], action_space.n,
+                                        hidden_layers=self._config["hidden_layers"],
+                                        activation="ReLu", use_noisy_linear=self.use_noisy)
         self.optimizer = torch.optim.Adam(self.Q.parameters(), lr=self._config["learning_rate"])
         self.loss_fn = nn.SmoothL1Loss()
         self.train_iter = 0
         self._update_target_net()
+        self.scaling = torch.tensor([1.0, 1.0, 0.5, 4.0, 4.0, 4.0,
+                                     1.0, 1.0, 0.5, 4.0, 4.0, 4.0,
+                                     2.0, 2.0, 10.0, 10.0, 4.0, 4.0]).float()
 
     def _update_target_net(self):
         self.Q_target.load_state_dict(self.Q.state_dict())
 
+    def _soft_update_target_net(self):
+        """
+        Soft update model parameters.
+        θ_target = τ*θ_local + (1 - τ)*θ_target
+        """
+        tau = self._config["tau"]
+        for target_param, local_param in zip(self.Q_target.parameters(), self.Q.parameters()):
+            target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
+
     def act(self, observation, eps=None):
-        eps = eps if eps is not None else self._config['eps']
+        if self.use_noisy:
+            self.Q.reset_noise()
+            eps = 0.0
+        else:
+            eps = eps if eps is not None else self._config['eps']
         if np.random.random() > eps:
             return self.Q.greedyAction(observation)
         return self._action_space.sample()
@@ -65,10 +85,14 @@ class DQNAgent:
     def train(self, iter_fit=32):
         losses = []
         self.train_iter += 1
-        if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
-            self._update_target_net()
+        if not self._config.get("use_soft_update", False):
+            if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
+                self._update_target_net()
 
         for _ in range(iter_fit):
+            if self.use_noisy:
+                self.Q.reset_noise()
+                self.Q_target.reset_noise()
             data = self.buffer.sample(batch=self._config['batch_size'])
 
             s = np.array(list(data[:, 0]), dtype=np.float32)
@@ -79,9 +103,11 @@ class DQNAgent:
 
             # Convert to Tensors
             s_tensor = torch.from_numpy(s).float()
+            s_tensor = s_tensor * self.scaling
             a_tensor = torch.from_numpy(a).long()
             rew_tensor = torch.from_numpy(rew).float()[:, None]
             sp_tensor = torch.from_numpy(s_p).float()
+            sp_tensor = sp_tensor * self.scaling
             done_tensor = torch.from_numpy(done).float()[:, None]
 
             # Double DQN: Q-online to pick action, Q-target to evaluate
@@ -100,7 +126,10 @@ class DQNAgent:
             current_q = self.Q(s_tensor).gather(1, a_tensor[:, None])
             loss = self.loss_fn(current_q, td_target)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.Q.parameters(), max_norm=1.0)
             self.optimizer.step()
+            if self._config.get("use_soft_update", False):
+                self._soft_update_target_net()
 
             losses.append(loss.item())
         return losses
