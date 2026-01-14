@@ -13,7 +13,8 @@ env = h_env.HockeyEnv()
 env = h_env.HockeyEnv(mode=h_env.Mode.TRAIN_SHOOTING)
 
 obs, info = env.reset()
-
+print(type(obs), obs.shape)
+print(env.action_space)
 mapper = ActionMapper(compound_action_set(), keep_mode=True)
 
 for i in range(mapper.n_actions()):

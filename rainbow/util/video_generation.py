@@ -4,30 +4,47 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from agents.agent import DQNAgent, DiscreteActionWrapper
-import torch
+from agents.agent import DQNAgent
+from actions.action_mapping import DiscreteActionWrapper
 
 
-def watch_agent(env_name='Pendulum-v1', video_folder='videos'):
+def watch_agent(
+        env_name="Pendulum-v1",
+        model_path="../checkpoints/final_model.pth",
+        video_folder="videos",
+        bins=5,
+):
     env = gym.make(env_name, render_mode="rgb_array")
-    env = RecordVideo(env, video_folder=video_folder, episode_trigger=lambda x: True)
-    env = DiscreteActionWrapper(env, bins=5)
+    env = RecordVideo(
+        env,
+        video_folder=video_folder,
+        episode_trigger=lambda x: True,
+        name_prefix="dqn_eval",
+    )
 
-    agent = DQNAgent(env.observation_space, env.action_space)
-    # agent.Q.load_state_dict(torch.load("dqn_model.pth"))
+    env = DiscreteActionWrapper(env, bins=bins)
 
-    ob, _ = env.reset()
+    agent = DQNAgent(
+        env.observation_space,
+        env.action_space,
+    )
+
+    agent.load(model_path)
+    agent.Q.eval()
+
+    obs, _ = env.reset()
     done = False
 
-    print("Recording episode...")
+    print(f"Recording episode using model: {model_path}")
+
     while not done:
-        # low epsilon (0.01) so the agent acts on its knowledge
-        action = agent.act(ob, eps=0.0)
-        ob, reward, terminated, truncated, _ = env.step(action)
+        # Greedy action (no exploration)
+        action = agent.act(obs, eps=0.0)
+        obs, reward, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
 
     env.close()
-    print(f"Video saved in the folder: {video_folder}")
+    print(f"Video saved to: {video_folder}")
 
 
 if __name__ == "__main__":

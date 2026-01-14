@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn as nn
 import gymnasium as gym
 from gymnasium import spaces
 import util.memory as mem
@@ -43,8 +44,12 @@ class DQNAgent:
         self._config.update(userconfig)
         self.buffer = mem.Memory(max_size=self._config["buffer_size"])
 
-        self.Q = DuelingQNetwork(observation_space.shape[0], action_space.n, learning_rate=self._config["learning_rate"])
-        self.Q_target = DuelingQNetwork(observation_space.shape[0], action_space.n, learning_rate=0)
+        self.Q = DuelingQNetwork(observation_space.shape[0], action_space.n, hidden_layers=[128, 128],
+                                 activation="ReLu", use_noisy_linear=self._config.get("use_noisy_linear", False))
+        self.Q_target = DuelingQNetwork(observation_space.shape[0], action_space.n, hidden_layers=[128, 128],
+                                        activation="ReLu", use_noisy_linear=self._config.get("use_noisy_linear", False))
+        self.optimizer = torch.optim.Adam(self.Q.parameters(), lr=self._config["learning_rate"])
+        self.loss_fn = nn.SmoothL1Loss()
         self.train_iter = 0
         self._update_target_net()
 
@@ -91,13 +96,28 @@ class DQNAgent:
 
             # Optimization Step
             self.Q.train()
-            self.Q.optimizer.zero_grad()
+            self.optimizer.zero_grad()
             current_q = self.Q(s_tensor).gather(1, a_tensor[:, None])
-            loss = self.Q.loss_fn(current_q, td_target)
+            loss = self.loss_fn(current_q, td_target)
             loss.backward()
-            self.Q.optimizer.step()
+            self.optimizer.step()
 
             losses.append(loss.item())
         return losses
 
+    def save(self, path: str):
+        torch.save({
+            "q_network": self.Q.state_dict(),
+            "q_target": self.Q_target.state_dict(),
+            "config": self._config,
+        }, path)
 
+    def load(self, path: str, load_target: bool = True):
+        checkpoint = torch.load(path, map_location="cpu")
+
+        self.Q.load_state_dict(checkpoint["q_network"])
+        self.Q.eval()
+
+        if load_target and "q_target" in checkpoint:
+            self.Q_target.load_state_dict(checkpoint["q_target"])
+            self.Q_target.eval()

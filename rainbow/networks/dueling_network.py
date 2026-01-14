@@ -1,49 +1,86 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from torch import Tensor
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from networks.noisy_layers import FactorizedNoisyLinear
 
 
 class DuelingQNetwork(nn.Module):
-    def __init__(self, observation_dim, action_dim, hidden_sizes=[128, 128], learning_rate=0.0002):
+    def __init__(
+            self,
+            observation_dim: int,
+            action_dim: int,
+            hidden_layers: list[int] = [128, 128],
+            activation: str = "relu",
+            use_noisy_linear: bool = False,
+    ):
         super().__init__()
 
-        # Feature extractor (shared by both streams)
-        self.feature_layer = nn.Sequential(
-            nn.Linear(observation_dim, hidden_sizes[0]),
-            nn.Tanh(),
-            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
-            nn.Tanh()
+        if activation.lower() == "tanh":
+            self.activation = nn.Tanh
+        elif activation.lower() == "relu":
+            self.activation = nn.ReLU
+        else:
+            raise NotImplementedError(f"Activation '{activation}' not implemented")
+
+        self.use_noisy_linear = use_noisy_linear
+        self.hidden_layers = self._build_hidden_layers(observation_dim, hidden_layers)
+
+        # Last hidden layer size
+        last_hidden_dim = hidden_layers[-1]
+
+        # Value and Advantage streams
+        self.value_stream = self._build_stream(last_hidden_dim, 1)
+        self.advantage_stream = self._build_stream(last_hidden_dim, action_dim)
+
+    def _linear(self, in_dim, out_dim):
+        if self.use_noisy_linear:
+            return FactorizedNoisyLinear(in_dim, out_dim)
+        else:
+            return nn.Linear(in_dim, out_dim)
+
+    def _build_hidden_layers(self, input_dim, hidden_layers):
+        layers = []
+        last_dim = input_dim
+        for dim in hidden_layers:
+            layers.append(self._linear(last_dim, dim))
+            layers.append(self.activation())
+            last_dim = dim
+        return nn.Sequential(*layers)
+
+    def _build_stream(self, input_dim, output_dim):
+        return nn.Sequential(
+            self._linear(input_dim, input_dim),
+            self.activation(),
+            self._linear(input_dim, output_dim)
         )
 
-        # Value stream: V(s) - How good is the state?
-        self.value_stream = nn.Linear(hidden_sizes[1], 1)
+    def reset_noise(self):
+        if self.use_noisy_linear:
+            for stream in [self.value_stream, self.advantage_stream]:
+                for layer in stream:
+                    if isinstance(layer, FactorizedNoisyLinear):
+                        layer.reset_noise()
 
-        # Advantage stream: A(s, a) - How much better is this action than others?
-        self.advantage_stream = nn.Linear(hidden_sizes[1], action_dim)
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.hidden_layers(x)
+        value = self.value_stream(x)
+        advantage = self.advantage_stream(x)
+        # Dueling Q formula
+        return value + advantage - advantage.mean(dim=1, keepdim=True)
 
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
-        self.loss_fn = nn.SmoothL1Loss()
-
-    def forward(self, x):
-        features = self.feature_layer(x)
-        value = self.value_stream(features)
-        advantage = self.advantage_stream(features)
-
-        # Combine: Q(s,a) = V(s) + (A(s,a) - mean(A(s,a)))
-        return value + (advantage - advantage.mean(dim=1, keepdim=True))
-
-    def predict(self, x):
+    # Helper functions
+    def predict(self, x: np.ndarray) -> np.ndarray:
         self.eval()
         with torch.no_grad():
-            # Handle single observations by adding a batch dimension
             if x.ndim == 1:
-                x = x[None, :]  # Change shape from (N,) to (1, N)
-
-            # Convert to tensor and run forward pass
+                x = x[None, :]
             input_tensor = torch.from_numpy(x.astype(np.float32))
-            result = self.forward(input_tensor).numpy()
+            return self.forward(input_tensor).numpy()
 
-            return result
-
-    def greedyAction(self, observations):
+    def greedyAction(self, observations: np.ndarray) -> np.ndarray:
         return np.argmax(self.predict(observations), axis=-1)
