@@ -12,19 +12,29 @@ class HockeyRewardManager:
         self.proximity_multiplier = proximity_multiplier
         self.direction_multiplier = direction_multiplier
 
-    def get_shaped_reward(self, env_reward, info, obs):
-        """
-        Calculates a custom reward based on environment feedback.
-        """
-        # Goal: +10, Loss: -10
-        total_reward = info.get("winner", 0)
-        total_reward += info.get("reward_closeness_to_puck", 0) * self.proximity_multiplier
-        total_reward += info.get("reward_puck_direction", 0) * self.direction_multiplier
+    def get_shaped_reward(self, env_reward, info, obs, episode_num):
+        total_reward = env_reward
+        '''
+        winner = info.get("winner", 0)
+        if winner == 1:
+            total_reward += self.win_bonus
+        elif winner == -1:
+            total_reward -= self.win_bonus
+        '''
+
+        shaping_weight = max(0.1, 1.0 - (episode_num / 8_000))
+
+        closeness = info.get("reward_closeness_to_puck", 0) * self.proximity_multiplier
+        direction = info.get("reward_puck_direction", 0) * self.direction_multiplier
+
+        total_reward += (closeness + direction) * shaping_weight
 
         if info.get("reward_touch_puck", 0) > 0:
-            total_reward += self.puck_touch_bonus
+            total_reward += self.puck_touch_bonus * shaping_weight
 
-        #total_reward = np.clip(total_reward, -2.0, self.win_bonus)
+        # Clip and rescale reward for stability
+        total_reward = np.clip(total_reward, -20.0, 20.0)
+        #total_reward /= 10.0
 
         return float(total_reward)
 

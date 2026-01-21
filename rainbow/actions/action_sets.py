@@ -27,28 +27,36 @@ def compound_action_set():
     return [
         DiscreteAction(),  # 0: idle
 
-        # Cardinal movement
+        # Movement: Full speed
         DiscreteAction(dx=1.0),
         DiscreteAction(dx=-1.0),
         DiscreteAction(dy=1.0),
         DiscreteAction(dy=-1.0),
 
-        # Diagonal movement (0.7 so magnitude is roughly 1)
-        DiscreteAction(dx=0.7, dy=0.7),
-        DiscreteAction(dx=0.7, dy=-0.7),
-        DiscreteAction(dx=-0.7, dy=0.7),
-        DiscreteAction(dx=-0.7, dy=-0.7),
+        # Movement: Precision/Micro-adjustments
+        DiscreteAction(dx=0.5),
+        DiscreteAction(dx=-0.5),
+        DiscreteAction(dy=0.5),
+        DiscreteAction(dy=-0.5),
 
-        # Rotation
-        DiscreteAction(dtheta=0.5),
-        DiscreteAction(dtheta=-0.5),
+        # Diagonal (Normalized)
+        DiscreteAction(dx=0.75, dy=0.75),
+        DiscreteAction(dx=0.75, dy=-0.75),
+        # DiscreteAction(dx=-0.75, dy=0.75),
+        # DiscreteAction(dx=-0.75, dy=-0.75),
 
-        # Compound movement + rotation
-        DiscreteAction(dx=1.0, dtheta=0.3),
-        DiscreteAction(dx=-1.0, dtheta=-0.3),
+        # Rotation: Fast and Slow
+        DiscreteAction(dtheta=1.0),  # Quick pivot
+        DiscreteAction(dtheta=-1.0),
+        DiscreteAction(dtheta=0.3),  # Fine-tuning aim
+        DiscreteAction(dtheta=-0.3),
 
-        # Shooting
+        # Offensive: Move & Shoot
         DiscreteAction(shoot=1.0),
-        DiscreteAction(dx=0.8, shoot=1.0),
-        DiscreteAction(dtheta=0.4, shoot=1.0),
+        DiscreteAction(dx=1.0, shoot=1.0),  # Charging shot
+        DiscreteAction(dtheta=0.5, shoot=1.0),  # Slap shot (rotating into puck)
+
+        # Defensive: Retreating
+        DiscreteAction(dx=-1.0, dy=0.5),  # Diagonal retreat
+        DiscreteAction(dx=-1.0, dy=-0.5),
     ]
