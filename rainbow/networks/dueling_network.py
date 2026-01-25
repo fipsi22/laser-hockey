@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
+from typing import List
 import os
 import sys
 
@@ -9,95 +10,59 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from networks.noisy_layers import FactorizedNoisyLinear
 
 
-class DuelingQNetwork(nn.Module):
+class DuelingDQN(nn.Module):
     def __init__(
             self,
             observation_dim: int,
             action_dim: int,
-            hidden_layers: list[int] = [256, 256],
+            hidden_layers: List[int],
             activation: str = "relu",
-            use_noisy_linear: bool = False,
-            device: str = "cpu"
+            use_noisy_linear: bool = True,
+            device: str = "cpu",
     ):
         super().__init__()
         self.device = torch.device(device)
         self.use_noisy_linear = use_noisy_linear
-        self.activation_fn = nn.ReLU if activation.lower() == "relu" else nn.Tanh
 
+        # Activation
+        if activation.lower() == "relu":
+            Act = nn.ReLU
+        elif activation.lower() == "tanh":
+            Act = nn.Tanh
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
+
+        # Feature extractor
         layers = []
         last_dim = observation_dim
         for dim in hidden_layers:
             layers.append(nn.Linear(last_dim, dim))
-            layers.append(self.activation_fn())
+            layers.append(nn.LayerNorm(dim))
+            layers.append(Act())
             last_dim = dim
+
         self.feature_extractor = nn.Sequential(*layers)
 
-        self.value_stream = self._build_stream(last_dim, 1, use_noisy_linear)
-        self.advantage_stream = self._build_stream(last_dim, action_dim, use_noisy_linear)
-
-        scaling_values = [1.0, 1.0, 0.5, 4.0, 4.0, 4.0,
-                          1.0, 1.0, 0.5, 4.0, 4.0, 4.0,
-                          2.0, 2.0, 10.0, 10.0, 4.0, 4.0]
-        self.register_buffer("scaling", torch.tensor(scaling_values).float())
+        # Dueling heads
+        Linear = FactorizedNoisyLinear if use_noisy_linear else nn.Linear
+        self.value_head = Linear(last_dim, 1)
+        self.advantage_head = Linear(last_dim, action_dim)
 
         self.to(self.device)
 
-    def _linear(self, in_dim, out_dim):
-        if self.use_noisy_linear:
-            return FactorizedNoisyLinear(in_dim, out_dim)
-        return nn.Linear(in_dim, out_dim)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.to(self.device)
 
-    def _build_hidden_layers(self, input_dim, hidden_layers):
-        layers = []
-        last_dim = input_dim
-        for dim in hidden_layers:
-            layers.append(self._linear(last_dim, dim))
-            layers.append(self.activation())
-            last_dim = dim
-        return nn.Sequential(*layers)
+        features = self.feature_extractor(x)
 
-    def _build_stream(self, input_dim, output_dim, use_noisy):
-        def linear_layer(in_f, out_f):
-            return FactorizedNoisyLinear(in_f, out_f) if use_noisy else nn.Linear(in_f, out_f)
+        value = self.value_head(features)
+        advantage = self.advantage_head(features)
 
-        return nn.Sequential(
-            linear_layer(input_dim, input_dim),
-            self.activation_fn(),
-            linear_layer(input_dim, output_dim)
-        )
+        return value + advantage - advantage.mean(dim=1, keepdim=True)
 
     def reset_noise(self):
-        if self.use_noisy_linear:
-            for m in self.modules():
-                if isinstance(m, FactorizedNoisyLinear):
-                    m.reset_noise()
-
-    def forward(self, x: Tensor) -> Tensor:
-        if x.device != self.device:
-            x = x.to(self.device)
-
-        if hasattr(self, "scaling"):
-            x = x * self.scaling
-
-        x = self.feature_extractor(x)
-        value = self.value_stream(x)
-        advantage = self.advantage_stream(x)
-
-        return value + (advantage - advantage.mean(dim=1, keepdim=True))
-
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        self.eval()
-        with torch.no_grad():
-            if x.ndim == 1:
-                x = x[None, :]
-            if isinstance(x, np.ndarray):
-                input_tensor = torch.from_numpy(x).float().to(self.device)
-            else:
-                input_tensor = x.float().to(self.device)
-            # input_tensor = input_tensor * scaling_tensor.to(self.device)
-
-            return self.forward(input_tensor).cpu().numpy()
-
-    def greedyAction(self, observations: np.ndarray, scaling_tensor: Tensor) -> int:
-        q_values = self.predict(observations)
-        return int(np.argmax(q_values, axis=-1))
+        if not self.use_noisy_linear:
+            return
+        for m in self.modules():
+            if isinstance(m, FactorizedNoisyLinear):
+                m.reset_noise()

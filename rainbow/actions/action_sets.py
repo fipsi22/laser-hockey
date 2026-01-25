@@ -25,38 +25,78 @@ def baseline_action_set():
 
 def compound_action_set():
     return [
-        DiscreteAction(),  # 0: idle
+        DiscreteAction(),  # idle
 
-        # Movement: Full speed
+        # Cardinal movement
         DiscreteAction(dx=1.0),
         DiscreteAction(dx=-1.0),
         DiscreteAction(dy=1.0),
         DiscreteAction(dy=-1.0),
 
-        # Movement: Precision/Micro-adjustments
+        # Diagonal (normalized)
+        DiscreteAction(dx=0.707, dy=0.707),
+        DiscreteAction(dx=0.707, dy=-0.707),
+        DiscreteAction(dx=-0.707, dy=0.707),
+        DiscreteAction(dx=-0.707, dy=-0.707),
+
+        # Diagonal (normalized) rotation
+        DiscreteAction(dx=0.707, dy=0.707, dtheta=1.0),
+        DiscreteAction(dx=0.707, dy=0.707, dtheta=-1.0),
+        DiscreteAction(dx=0.707, dy=-0.707, dtheta=1.0),
+        DiscreteAction(dx=0.707, dy=-0.707, dtheta=-1.0),
+        DiscreteAction(dx=-0.707, dy=0.707, dtheta=1.0),
+        DiscreteAction(dx=-0.707, dy=0.707, dtheta=-1.0),
+        DiscreteAction(dx=-0.707, dy=-0.707, dtheta=1.0),
+        DiscreteAction(dx=-0.707, dy=-0.707, dtheta=-1.0),
+
+        # Rotation
+        DiscreteAction(dtheta=1.0),
+        DiscreteAction(dtheta=-1.0),
+
+        # Move + rotate
+        DiscreteAction(dx=1.0, dtheta=1),
+        DiscreteAction(dx=1.0, dtheta=-1),
+        DiscreteAction(dx=-1.0, dtheta=1),
+        DiscreteAction(dx=-1.0, dtheta=-1),
+
+        # Shooting (compound only)
+        DiscreteAction(shoot=1.0),
+    ]
+
+
+def micro_movement_action_set():
+    return [
+        DiscreteAction(),  # idle
+
+        # Cardinal movement
+        DiscreteAction(dx=1.0),
+        DiscreteAction(dx=-1.0),
+        DiscreteAction(dy=1.0),
+        DiscreteAction(dy=-1.0),
+
+        # Micro movement
         DiscreteAction(dx=0.5),
         DiscreteAction(dx=-0.5),
         DiscreteAction(dy=0.5),
         DiscreteAction(dy=-0.5),
 
-        # Diagonal (Normalized)
-        DiscreteAction(dx=0.75, dy=0.75),
-        DiscreteAction(dx=0.75, dy=-0.75),
-        # DiscreteAction(dx=-0.75, dy=0.75),
-        # DiscreteAction(dx=-0.75, dy=-0.75),
+        # Diagonal (normalized)
+        DiscreteAction(dx=0.707, dy=0.707),
+        DiscreteAction(dx=0.707, dy=-0.707),
+        DiscreteAction(dx=-0.707, dy=0.707),
+        DiscreteAction(dx=-0.707, dy=-0.707),
 
-        # Rotation: Fast and Slow
-        DiscreteAction(dtheta=1.0),  # Quick pivot
+        # Rotation
+        DiscreteAction(dtheta=1.0),
         DiscreteAction(dtheta=-1.0),
-        DiscreteAction(dtheta=0.3),  # Fine-tuning aim
-        DiscreteAction(dtheta=-0.3),
 
-        # Offensive: Move & Shoot
-        DiscreteAction(shoot=1.0),
-        DiscreteAction(dx=1.0, shoot=1.0),  # Charging shot
-        DiscreteAction(dtheta=0.5, shoot=1.0),  # Slap shot (rotating into puck)
+        # Move + rotate
+        DiscreteAction(dx=1.0, dtheta=0.3),
+        DiscreteAction(dx=1.0, dtheta=-0.3),
+        DiscreteAction(dx=-1.0, dtheta=0.3),
+        DiscreteAction(dx=-1.0, dtheta=-0.3),
 
-        # Defensive: Retreating
-        DiscreteAction(dx=-1.0, dy=0.5),  # Diagonal retreat
-        DiscreteAction(dx=-1.0, dy=-0.5),
+        # Shooting (compound only)
+        DiscreteAction(dx=0.8, shoot=1.0),
+        DiscreteAction(dtheta=0.5, shoot=1.0),
     ]

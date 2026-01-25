@@ -2,46 +2,55 @@ import numpy as np
 
 
 class HockeyRewardManager:
-    def __init__(self,
-                 win_bonus=10.0,
-                 puck_touch_bonus=0.5,
-                 proximity_multiplier=1.0,
-                 direction_multiplier=2.0):
-        self.win_bonus = win_bonus
-        self.puck_touch_bonus = puck_touch_bonus
-        self.proximity_multiplier = proximity_multiplier
-        self.direction_multiplier = direction_multiplier
+    def __init__(self):
+        self.reset()
+        self.max_puck_speed = 20.0
 
-    def get_shaped_reward(self, env_reward, info, obs, episode_num):
-        total_reward = env_reward
-        '''
-        winner = info.get("winner", 0)
-        if winner == 1:
-            total_reward += self.win_bonus
-        elif winner == -1:
-            total_reward -= self.win_bonus
-        '''
+    def reset(self):
+        self.last_touch_frame = 0
+        self.frame_count = 0
+        self.prev_dist = None
 
-        shaping_weight = max(0.1, 1.0 - (episode_num / 8_000))
+    def get_shaped_reward(self, env, obs, info, env_reward):
+        self.frame_count += 1
+        reward = 0.0
 
-        closeness = info.get("reward_closeness_to_puck", 0) * self.proximity_multiplier
-        direction = info.get("reward_puck_direction", 0) * self.direction_multiplier
+        p1_pos = obs[0:2]
+        p1_vel = obs[3:5]
+        puck_pos = obs[12:14]
+        if len(obs) > 16:  # keep_mode=True
+            p1_has_puck = obs[16]
 
-        total_reward += (closeness + direction) * shaping_weight
+        reward += info.get("reward_closeness_to_puck", 0) * 0.02
+        dist_to_puck = np.linalg.norm(p1_pos - puck_pos)
+        if self.prev_dist is not None:
+            delta_dist = self.prev_dist - dist_to_puck
+            reward += np.clip(delta_dist * 0.1, -1.0, 1.0)
+        self.prev_dist = dist_to_puck
 
-        if info.get("reward_touch_puck", 0) > 0:
-            total_reward += self.puck_touch_bonus * shaping_weight
+        reward += 0.05 * info.get("reward_puck_direction", 0)
 
-        # Clip and rescale reward for stability
-        total_reward = np.clip(total_reward, -20.0, 20.0)
-        #total_reward /= 10.0
+        # Reward for actually making contact
+        if p1_has_puck >= 5:
+            # Only reward a "fresh" touch to prevent vibrating on the puck
+            if (self.frame_count - self.last_touch_frame) > 10:
+                reward += 0.15
+                self.last_touch_frame = self.frame_count
 
-        return float(total_reward)
+        win_status = info.get("winner", 0)
+        frames_since_touch = self.frame_count - self.last_touch_frame
 
-    def update_multipliers(self, total_steps):
-        """
-        Reward Decay: Slowly reduce reward shaping as the agent gets better.
-        """
-        if total_steps > 500000:
-            self.proximity_multiplier *= 0.999
-            self.puck_touch_bonus *= 0.999
+        if win_status == 1:
+            # Check for direct shot vs accidental goal
+            reward += 10.0 if frames_since_touch < 30 else 7.0
+        elif win_status == -1:
+            reward -= 10.0
+            # reward -= 10.0 if frames_since_touch > 15 else 5.0
+
+        return reward
+
+    def get_basic_reward_shaped(self, env, obs, info, env_reward):
+        reward = env_reward
+        reward += info.get("reward_puck_direction", 0) * 0.75
+        reward += info.get("reward_touch_puck", 0) * 0.1
+        return reward

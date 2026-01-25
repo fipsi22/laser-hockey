@@ -6,7 +6,7 @@ from gymnasium import spaces
 import util.memory as mem
 from util.prioritized_replay_buffer import PrioritizedReplayBuffer
 from networks.feed_forward import Feedforward
-from networks.dueling_network import DuelingQNetwork
+from networks.dueling_network import DuelingDQN
 
 
 class QFunction(Feedforward):
@@ -39,12 +39,14 @@ class DQNAgent:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self._config = {
-            "eps": 0.0,  # disabled when using noisy nets
+            "eps": 0.1,  # disabled when using noisy nets
             "use_per": True,
             "discount": 0.99,
             "buffer_size": int(1e6),
             "batch_size": 32,
             "learning_rate": 1e-4,
+            "lr_scheduler_steps": [1_500_000, 4_500_000],
+            "lr_scheduler_factor": 0.5,
             "update_target_every": 2_000,
             "train_every": 4,
             "use_target_net": True,
@@ -53,26 +55,26 @@ class DQNAgent:
             "hidden_layers": [512, 512],
             "tau": 0.005,
             "use_soft_update": False,
-            "per_alpha": 0.6,
+            "per_alpha": 0.5,
             "per_beta": 0.4,
-            "per_beta_inc": 0.000009
+            "per_beta_inc": 0.000009,
+            "n_step": 1,  # 1= Standard DQN
+            "use_n_step": False,
         }
         self._config.update(userconfig)
 
         self.use_noisy = self._config["use_noisy_linear"]
 
-
         self.buffer = PrioritizedReplayBuffer(
             observation_shape=observation_space.shape[0],
             action_shape=1,
             buffer_size=self._config["buffer_size"],
-            device=self.device,  # Optional: helps if you want to store tensors on GPU directly
-            alpha=self._config.get("alpha", 0.6),
-            beta=self._config.get("beta", 0.4)
+            device=self.device,
+            alpha=self._config["per_alpha"],
+            beta=self._config["per_beta"]
         )
 
-
-        self.Q = DuelingQNetwork(
+        self.Q = DuelingDQN(
             observation_space.shape[0],
             action_space.n,
             hidden_layers=self._config["hidden_layers"],
@@ -80,7 +82,7 @@ class DQNAgent:
             use_noisy_linear=self.use_noisy
         ).to(self.device)
 
-        self.Q_target = DuelingQNetwork(
+        self.Q_target = DuelingDQN(
             observation_space.shape[0],
             action_space.n,
             hidden_layers=self._config["hidden_layers"],
@@ -94,19 +96,12 @@ class DQNAgent:
 
         self.lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
-            milestones=[6000, 10000, 15_000],
-            gamma=0.5
+            milestones=self._config["lr_scheduler_steps"],
+            gamma=self._config["lr_scheduler_factor"]
         )
 
-        '''self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode='max',
-            factor=0.5,
-            patience=5
-        )'''
-
         self.loss_fn = nn.SmoothL1Loss(reduction="none")
-        self.train_iter = 0
+        self.train_iter = 1
 
         self.scaling = torch.tensor(
             [1.0, 1.0, 0.5, 4.0, 4.0, 4.0,
@@ -117,6 +112,12 @@ class DQNAgent:
 
         self._update_target_net()
 
+        self.gamma = self._config["discount"]
+        if self._config["use_n_step"]:
+            self.effective_discount = self.gamma ** self._config["n_step"]
+        else:
+            self.effective_discount = self.gamma
+
     def _update_target_net(self):
         self.Q_target.load_state_dict(self.Q.state_dict())
 
@@ -125,47 +126,39 @@ class DQNAgent:
         for tp, lp in zip(self.Q_target.parameters(), self.Q.parameters()):
             tp.data.copy_(tau * lp.data + (1.0 - tau) * tp.data)
 
-    def act(self, observation, eps=None):
-        obs = torch.from_numpy(observation).float().to(self.device)
+    def act(self, observation, eps=None, reset_noise=True):
+        obs = torch.from_numpy(observation).float().to(self.device).unsqueeze(0) * self.scaling
+
         if self.use_noisy:
-            self.Q.reset_noise()
-            eps = 0.0
+            if reset_noise:
+                self.Q.reset_noise()
+            eps = eps if eps is not None else 0.02
         else:
             eps = eps if eps is not None else self._config["eps"]
+
         if np.random.random() > eps:
-            return self.Q.greedyAction(obs, self.scaling)
+            with torch.no_grad():
+                q_values = self.Q(obs)
+                action = q_values.argmax(dim=1).item()
+            return action
         else:
             return self._action_space.sample()
 
-    def train(self, iter_fit=32, beta=0.4):
+    def train(self, iter_fit=1, beta=0.4):
         losses = []
         self.train_iter += 1
 
-        # 1. Target Network Update Logic
-        if not self._config["use_soft_update"]:
-            if self._config["use_target_net"] and self.train_iter % self._config["update_target_every"] == 0:
-                self._update_target_net()
-
         for _ in range(iter_fit):
-            # 2. Optimized Sampling
-            # The buffer now returns a ReplayData object, weights (Tensor), and indices (list)
-            # Note: I'm passing beta directly to the buffer's sample method
             self.buffer.beta = beta
             replay_data, weights_tensor, indices = self.buffer.sample(self._config["batch_size"])
 
-            # Move all tensors to the correct device at once
-            s = replay_data.observations.to(self.device)
+            s = replay_data.observations.to(self.device) * self.scaling
             a = replay_data.actions.to(self.device)
             r = replay_data.rewards.to(self.device).unsqueeze(1)
-            sp = replay_data.next_observations.to(self.device)
+            sp = replay_data.next_observations.to(self.device) * self.scaling
             d = replay_data.dones.to(self.device).unsqueeze(1)
             weights_tensor = weights_tensor.to(self.device)
 
-            if self.use_noisy:
-                self.Q.reset_noise()
-                self.Q_target.reset_noise()
-
-            # 3. Compute TD Target
             with torch.no_grad():
                 if self._config["use_double_dqn"]:
                     # Double DQN: Use Q-net to select action, Target-net to evaluate it
@@ -175,28 +168,40 @@ class DQNAgent:
                     # Standard DQN: Max over Target-net actions
                     v_prime = self.Q_target(sp).max(dim=1, keepdim=True)[0]
 
-                td_target = r + self._config["discount"] * (1.0 - d) * v_prime
+                td_target = r + self.effective_discount * (1.0 - d) * v_prime
 
             self.optimizer.zero_grad()
+
             current_q = self.Q(s).gather(1, a)
-
             elementwise_loss = self.loss_fn(current_q, td_target)
-
             loss = (weights_tensor.unsqueeze(1) * elementwise_loss).mean()
-
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.Q.parameters(), 1.0)
             self.optimizer.step()
 
-            td_error = (current_q - td_target).abs().detach().cpu().numpy().flatten()
-            self.buffer.update_priorities(indices, td_error)
+            td_error = (current_q - td_target).abs().detach().cpu().numpy()
+            priority = abs(td_error) + 1e-6
+            # priority = np.clip(priority, 1e-6, 10.0)
+            self.buffer.update_priorities(indices, priority.flatten())
+            # self.buffer.log_per_stats()
 
             losses.append(loss.item())
 
+        self.lr_scheduler.step()
         if self._config["use_soft_update"]:
             self._soft_update_target_net()
+        elif self.train_iter % self._config["update_target_every"] == 0:
+            self._update_target_net()
 
-        return losses
+        return loss.item()
+
+    def update_n_step_config(self, use_n_step, n_step):
+        self._config["use_n_step"] = use_n_step
+        self._config["n_step"] = n_step
+        if use_n_step:
+            self.effective_discount = self._config["discount"] ** n_step
+        else:
+            self.effective_discount = self._config["discount"]
 
     def save(self, path):
         torch.save(

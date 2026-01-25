@@ -23,7 +23,7 @@ class HockeyEvaluator:
 
             while not done:
                 with torch.no_grad():
-                    a1_idx = self.agent.act(obs, eps=0.0)
+                    a1_idx = self.agent.act(obs, eps=0.0, reset_noise=False)
 
                 a1_idx = int(a1_idx.item() if hasattr(a1_idx, "item") else a1_idx)
                 a1 = self.mapper.map(a1_idx)

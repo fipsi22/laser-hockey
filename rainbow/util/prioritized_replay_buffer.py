@@ -1,13 +1,77 @@
-import torch
 import numpy as np
+
+
+class SumSegmentTree:
+    def __init__(self, capacity: int):
+        assert capacity & (capacity - 1) == 0  # power of two
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity, dtype=np.float32)
+
+    def __setitem__(self, idx: int, value: float):
+        idx += self.capacity
+        self.tree[idx] = value
+        idx //= 2
+        while idx >= 1:
+            self.tree[idx] = self.tree[2 * idx] + self.tree[2 * idx + 1]
+            idx //= 2
+
+    def __getitem__(self, idx: int) -> float:
+        return self.tree[idx + self.capacity]
+
+    def sum(self, start=0, end=None) -> float:
+        if end is None:
+            end = self.capacity - 1
+        start += self.capacity
+        end += self.capacity
+        total = 0.0
+        while start <= end:
+            if start & 1:
+                total += self.tree[start]
+                start += 1
+            if not (end & 1):
+                total += self.tree[end]
+                end -= 1
+            start //= 2
+            end //= 2
+        return total
+
+    def find_prefixsum_idx(self, prefixsum: float) -> int:
+        idx = 1
+        while idx < self.capacity:
+            left = 2 * idx
+            if self.tree[left] >= prefixsum:
+                idx = left
+            else:
+                prefixsum -= self.tree[left]
+                idx = left + 1
+        return idx - self.capacity
+
+
+class MinSegmentTree:
+    def __init__(self, capacity: int):
+        assert capacity & (capacity - 1) == 0
+        self.capacity = capacity
+        self.tree = np.full(2 * capacity, np.inf, dtype=np.float32)
+
+    def __setitem__(self, idx: int, value: float):
+        idx += self.capacity
+        self.tree[idx] = value
+        idx //= 2
+        while idx >= 1:
+            self.tree[idx] = min(self.tree[2 * idx], self.tree[2 * idx + 1])
+            idx //= 2
+
+    def min(self) -> float:
+        return self.tree[1]
+
+
+import torch
 import random
-from typing import Tuple
 from dataclasses import dataclass
 
 
 @dataclass
 class ReplayData:
-    """Structure to hold a batch of transitions."""
     observations: torch.Tensor
     next_observations: torch.Tensor
     actions: torch.Tensor
@@ -21,19 +85,18 @@ class PrioritizedReplayBuffer:
             observation_shape: int,
             action_shape: int,
             buffer_size: int,
-            device: torch.device = torch.device("cpu"),
+            device: torch.device,
             alpha: float = 0.6,
             beta: float = 0.4,
-    ) -> None:
+    ):
         self.device = device
         self.buffer_size = buffer_size
-        self.pos = 0
-        self.full = False
-
-        # PER parameters
         self.alpha = alpha
         self.beta = beta
         self.max_priority = 1.0
+
+        self.pos = 0
+        self.full = False
 
         self.observations = torch.zeros((buffer_size, observation_shape), dtype=torch.float32)
         self.next_observations = torch.zeros((buffer_size, observation_shape), dtype=torch.float32)
@@ -45,85 +108,73 @@ class PrioritizedReplayBuffer:
         while tree_capacity < buffer_size:
             tree_capacity *= 2
 
-        self.sum_tree = np.zeros(2 * tree_capacity - 1)
-        self.min_tree = np.full(2 * tree_capacity - 1, float('inf'))
-        self.tree_capacity = tree_capacity
+        self.sum_tree = SumSegmentTree(tree_capacity)
+        self.min_tree = MinSegmentTree(tree_capacity)
 
-    def add(self, obs, next_obs, action, reward, done) -> None:
+    def update_priorities(self, indices, priorities):
+        for idx, priority in zip(indices, priorities):
+            priority = float(priority)
+            self.sum_tree[idx] = priority ** self.alpha
+            self.min_tree[idx] = priority ** self.alpha
+            self.max_priority = max(self.max_priority, priority)
+
+    def add(self, obs, next_obs, action, reward, done):
         idx = self.pos
 
-        self.observations[idx] = torch.as_tensor(obs)
-        self.next_observations[idx] = torch.as_tensor(next_obs)
-        self.actions[idx] = torch.as_tensor(action)
-        self.rewards[idx] = torch.as_tensor(reward)
-        self.dones[idx] = torch.as_tensor(done)
+        self.observations[idx] = torch.as_tensor(obs, dtype=torch.float32)
+        self.next_observations[idx] = torch.as_tensor(next_obs, dtype=torch.float32)
+        self.actions[idx] = torch.as_tensor(action, dtype=torch.long)
+        self.rewards[idx] = reward
+        self.dones[idx] = float(done)
 
-        self._update_tree(idx, self.max_priority ** self.alpha)
+        priority = self.max_priority ** self.alpha
+        self.sum_tree[idx] = priority
+        self.min_tree[idx] = priority
 
         self.pos = (self.pos + 1) % self.buffer_size
         if self.pos == 0:
             self.full = True
 
-    def _update_tree(self, idx: int, priority: float) -> None:
-        """Helper to update both sum and min trees."""
-        tree_idx = idx + self.tree_capacity - 1
-        self.sum_tree[tree_idx] = priority
-        self.min_tree[tree_idx] = priority
-
-        while tree_idx > 0:
-            tree_idx = (tree_idx - 1) // 2
-            left = 2 * tree_idx + 1
-            right = 2 * tree_idx + 2
-            self.sum_tree[tree_idx] = self.sum_tree[left] + self.sum_tree[right]
-            self.min_tree[tree_idx] = min(self.min_tree[left], self.min_tree[right])
-
-    def sample(self, batch_size: int) -> Tuple[ReplayData, torch.Tensor, list]:
-        total_priority = self.sum_tree[0]
+    def sample(self, batch_size: int):
+        end = self.buffer_size - 1 if self.full else self.pos - 1
+        total_priority = self.sum_tree.sum(0, end)
         segment = total_priority / batch_size
 
         indices = []
         priorities = []
 
         for i in range(batch_size):
-            a, b = segment * i, segment * (i + 1)
-            value = random.uniform(a, b)
-
-            idx = self._retrieve(value)
+            prefixsum = (i + random.random()) * segment
+            idx = self.sum_tree.find_prefixsum_idx(prefixsum)
             indices.append(idx)
-            priorities.append(self.sum_tree[idx + self.tree_capacity - 1])
+            priorities.append(self.sum_tree[idx])
 
-        current_size = self.buffer_size if self.full else self.pos
         probs = np.array(priorities) / total_priority
-        weights = (current_size * probs) ** (-self.beta)
+        weights = (probs * (end + 1)) ** (-self.beta)
 
-        max_weight = (current_size * (self.min_tree[0] / total_priority)) ** (-self.beta)
-        weights = torch.tensor(weights / max_weight, dtype=torch.float32)
+        min_prob = self.min_tree.min() / total_priority
+        max_weight = (min_prob * (end + 1)) ** (-self.beta)
+        weights /= max_weight
 
-        data = ReplayData(
-            observations=self.observations[indices],
-            next_observations=self.next_observations[indices],
-            actions=self.actions[indices],
-            rewards=self.rewards[indices],
-            dones=self.dones[indices]
+        weights = torch.tensor(weights, device=self.device, dtype=torch.float32)
+
+        batch = ReplayData(
+            observations=self.observations[indices].to(self.device),
+            next_observations=self.next_observations[indices].to(self.device),
+            actions=self.actions[indices].to(self.device),
+            rewards=self.rewards[indices].to(self.device),
+            dones=self.dones[indices].to(self.device),
         )
 
-        return data, weights, indices
+        return batch, weights, indices
 
-    def _retrieve(self, value: float) -> int:
-        """Search the sum tree for the index corresponding to the prefix sum value."""
-        idx = 0
-        while idx < self.tree_capacity - 1:
-            left = 2 * idx + 1
-            right = 2 * idx + 2
-            if value <= self.sum_tree[left]:
-                idx = left
-            else:
-                value -= self.sum_tree[left]
-                idx = right
-        return idx - (self.tree_capacity - 1)
+    def log_per_stats(self):
+        if self.full:
+            size = self.buffer_size
+        else:
+            size = self.pos
+        # Grab all stored priorities (powered by alpha)
+        all_priorities = np.array([self.sum_tree[i] for i in range(size)])
+        print(
+            f"PER stats — min: {all_priorities.min():.4f}, mean: {all_priorities.mean():.4f}, max: {all_priorities.max():.4f}")
 
-    def update_priorities(self, indices: list, priorities: np.ndarray) -> None:
-        for idx, priority in zip(indices, priorities):
-            priority = max(priority, 1e-6)  # Ensure non-zero
-            self.max_priority = max(self.max_priority, priority)
-            self._update_tree(idx, priority ** self.alpha)
