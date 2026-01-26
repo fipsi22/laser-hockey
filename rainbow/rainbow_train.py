@@ -45,7 +45,7 @@ def run_training(
         per_alpha=0.4,
         discount=0.99,
         buffer_size=int(1e5),
-        batch_size=128,
+        batch_size=256,
         learning_rate=5e-4,
         use_double_dqn=True,
         hidden_layers=[512],
@@ -75,7 +75,7 @@ def run_training(
         agent.discount = gamma ** n_step
     else:
         agent.discount = gamma
-    train_every = agent._config.get('train_every', 4)
+    train_every = agent._config.get('train_every', 2)
 
     weak_opp = h_env.BasicOpponent(weak=True)
     hard_opp = h_env.BasicOpponent(weak=False)
@@ -155,7 +155,7 @@ def run_training(
 
             current_buffer_size = agent.buffer.buffer_size if agent.buffer.full else agent.buffer.pos
             if current_buffer_size >= 20_000 and total_steps % train_every == 0:
-                loss = agent.train(iter_fit=1, beta=current_beta)
+                loss = agent.train(iter_fit=2, beta=current_beta)
                 all_losses.append(loss)
                 episode_losses.append(loss)
 

@@ -136,8 +136,9 @@ class PrioritizedReplayBuffer:
             self.full = True
 
     def sample(self, batch_size: int):
-        end = self.buffer_size - 1 if self.full else self.pos - 1
-        total_priority = self.sum_tree.sum(0, end)
+        end = self.buffer_size if self.full else self.pos
+        if end == 0: return None
+        total_priority = self.sum_tree.sum(0, end - 1)
         segment = total_priority / batch_size
 
         indices = []
@@ -146,10 +147,11 @@ class PrioritizedReplayBuffer:
         for i in range(batch_size):
             prefixsum = (i + random.random()) * segment
             idx = self.sum_tree.find_prefixsum_idx(prefixsum)
+            idx = min(idx, end - 1)
             indices.append(idx)
             priorities.append(self.sum_tree[idx])
 
-        probs = np.array(priorities) / total_priority
+        probs = np.array(priorities) / (total_priority + 1e-8)
         weights = (probs * (end + 1)) ** (-self.beta)
 
         min_prob = self.min_tree.min() / total_priority
