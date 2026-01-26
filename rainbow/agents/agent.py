@@ -45,7 +45,7 @@ class DQNAgent:
             "buffer_size": int(1e6),
             "batch_size": 32,
             "learning_rate": 1e-4,
-            "lr_scheduler_steps": [375_000, 1_125_000],  # If train_every is 4, milestones / 4
+            "lr_scheduler_steps": [200_000, 500_000],  # If train_every is 4, milestones / 4
             "lr_scheduler_factor": 0.5,
             "update_target_every": 2_000,
             "train_every": 4,

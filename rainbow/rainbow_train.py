@@ -42,13 +42,13 @@ def run_training(
         observation_space=env.observation_space,
         action_space=gym.spaces.Discrete(len(mapper)),
         use_per=True,
-        per_alpha=0.4,
+        per_alpha=0.5,
         discount=0.99,
         buffer_size=int(1e5),
         batch_size=64,
         learning_rate=1e-4,
         use_double_dqn=True,
-        hidden_layers=[128, 128],
+        hidden_layers=[128, 128, 128],
         use_noisy_linear=True,
         n_step=5,
         use_n_step=True,
@@ -94,6 +94,8 @@ def run_training(
     eps_end = 0.05
     eps_decay_steps = 1_000_000
 
+    use_symmetry = True
+
     print("Starting training...")
 
     for episode in range(max_episodes):
@@ -106,12 +108,12 @@ def run_training(
         should_render = (episode % 20 == 0)
 
         current_opponent = weak_opp if episode < curriculum_threshold else random.choice(opponent_pool)
-
+        train_step_counter = 0
         for t in range(max_steps):
 
             eps_progress = min(1.0, total_steps / eps_decay_steps)
-            #current_eps = eps_end + (eps_start - eps_end) * (1.0 - eps_progress)
-            current_eps=0
+            # current_eps = eps_end + (eps_start - eps_end) * (1.0 - eps_progress)
+            current_eps = 0
 
             progress = min(1.0, total_steps / 3_000_000)
             current_beta = beta_start + progress * (beta_end - beta_start)
@@ -133,19 +135,37 @@ def run_training(
             shaped_reward = reward_manager.get_basic_reward_shaped(env, obs_new, info, env_reward)
 
             if use_n_step:
-                # Add to local temporary buffer
+                # Add the current transition to the local temporary deque
                 n_step_buffer.append((obs, a1_idx, shaped_reward))
 
-                # Only add to PER if we have enough steps OR we are at the end of the game
                 if len(n_step_buffer) == n_step:
-                    # Calculate discounted sum: R = r1 + γ*r2 + γ^2*r3
+                    # Calculate discounted sum: R = r1 + γ*r2 + ... + γ^(n-1)*rn
                     sum_reward = sum([n_step_buffer[i][2] * (gamma ** i) for i in range(n_step)])
                     state_n_ago, action_n_ago, _ = n_step_buffer[0]
 
+                    # Store Original Experience
                     agent.buffer.add(state_n_ago, obs_new, action_n_ago, sum_reward, done)
+
+                    # Store Mirrored Experience (Symmetry Learning)
+                    if use_symmetry:
+                        m_s = mapper.get_mirrored_obs(state_n_ago)
+                        m_s_next = mapper.get_mirrored_obs(obs_new)
+                        m_a = mapper.get_mirrored_index(action_n_ago)
+                        # Reward and done status remain identical for the mirror
+                        agent.buffer.add(m_s, m_s_next, m_a, sum_reward, done)
             else:
+                # Store Original
                 agent.buffer.add(obs, obs_new, a1_idx, shaped_reward, done)
 
+                # Store Mirrored
+                if use_symmetry:
+                    agent.buffer.add(
+                        mapper.get_mirrored_obs(obs),
+                        mapper.get_mirrored_obs(obs_new),
+                        mapper.get_mirrored_index(a1_idx),
+                        shaped_reward,
+                        done
+                    )
 
             total_reward += shaped_reward
             total_steps += 1
@@ -154,22 +174,37 @@ def run_training(
                 total_puck_touches += 1
 
             current_buffer_size = agent.buffer.buffer_size if agent.buffer.full else agent.buffer.pos
-            if current_buffer_size >= 20_000 and total_steps % train_every == 0:
-                loss = agent.train(iter_fit=2, beta=current_beta)
-                all_losses.append(loss)
-                episode_losses.append(loss)
 
+            if current_buffer_size >= 20_000:
+                train_step_counter += 1
+                if train_step_counter >= train_every:
+                    loss = agent.train(iter_fit=2, beta=current_beta)
+                    all_losses.append(loss)
+                    episode_losses.append(loss)
+                    train_step_counter = 0
             if done:
                 if use_n_step and len(n_step_buffer) > 0:
                     while len(n_step_buffer) > 0:
                         sum_reward = sum([n_step_buffer[i][2] * (gamma ** i) for i in range(len(n_step_buffer))])
                         state_n_ago, action_n_ago, _ = n_step_buffer.popleft()
                         # For these final steps, next_state is obs_new (the terminal state)
+                        # Add original terminal n-step
                         agent.buffer.add(state_n_ago, obs_new, action_n_ago, sum_reward, True)
+
+                        # Add mirrored terminal n-step
+                        if use_symmetry:
+                            agent.buffer.add(
+                                mapper.get_mirrored_obs(state_n_ago),
+                                mapper.get_mirrored_obs(obs_new),
+                                mapper.get_mirrored_index(action_n_ago),
+                                sum_reward,
+                                True
+                            )
                 break
             obs = obs_new
 
         current_lr = agent.optimizer.param_groups[0]['lr']
+        lr_steps = agent.lr_scheduler.last_epoch
 
         episode_stats = {
             "episode": episode,
@@ -190,7 +225,8 @@ def run_training(
             agent.save(os.path.join(save_dir, f"checkpoint_ep{episode}.pth"))
 
         if episode % 20 == 0:
-            print(f"Episode {episode:4d} | Reward: {total_reward:8.2f} | LR: {current_lr} | steps: {total_steps} | loss: {loss}" )
+            print(
+                f"Episode {episode:4d} | Reward: {total_reward:8.2f} | LR: {current_lr} | steps: {total_steps} | loss: {loss} | scheduler: {lr_steps}")
             agent.buffer.log_per_stats()
 
         if episode % 500 == 0 and episode > 0:
@@ -220,7 +256,6 @@ def run_training(
 
             print(
                 f"Win Rate: {win_rate:.2%} | wins: {detailed_results['wins']} | losses: {detailed_results['losses']} | ties: {detailed_results['ties']}")
-            # Example inside your evaluator or test run
             with torch.no_grad():
                 obs_tensor = torch.tensor(obs).unsqueeze(0).float().to(agent.device)
                 q_vals = agent.Q(obs_tensor)
@@ -263,8 +298,7 @@ if __name__ == "__main__":
     env = gym.make('Hockey-v0')
     env = h_env.HockeyEnv(mode=h_env.Mode.NORMAL)
     # env = h_env.HockeyEnv(mode=h_env.Mode.TRAIN_SHOOTING)
-    mapper = ActionMapper(compound_action_set())
-    # env = GenericDiscreteWrapper(env, mapper)
+    mapper = ActionMapper(compound_action_set(), keep_mode=True)
 
     run_training(
         env=env,
