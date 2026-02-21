@@ -1,3 +1,25 @@
-# Laser Hockey Reinforcement Learning Challenge
+# Laser Hockey: Rainbow-DQN
 
-A Rainbow-DQN implementation designed for the [hockey-env](https://github.com/martius-lab/hockey-env) Gymnasium environment. This repository maps an 18-dimensional continuous action space into a discrete framework and utilizes distributional reinforcement learning to handle sparse rewards.
+A Rainbow-DQN implementation for the [hockey-env](https://github.com/martius-lab/hockey-env) Gymnasium environment. This project demonstrates a modular reinforcement learning setup using Rainbow-DQN, including prioritized replay, multi-step learning, dueling networks, and noisy nets.
+
+## Features
+
+- Rainbow-DQN agent with:
+  - Dueling Q-Network
+  - Noisy Nets for exploration
+  - Prioritized Experience Replay
+  - Multi-step returns
+  - Distributional Q-values (QR-DQN)
+  - Geometric Data Augmentation
+  - Symmetry-Aware Regularization
+- Training scripts with configurable hyperparameters
+- Evaluation scripts and plotting utilities
+
+## Installation
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/fipsi22/laser-hockey.git
+cd laser-hockey
+pip install -r requirements.txt
