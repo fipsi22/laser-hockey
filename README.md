@@ -7,6 +7,7 @@ A Rainbow-DQN implementation for the [hockey-env](https://github.com/martius-lab
 
 - Rainbow-DQN agent with:
   - Dueling Q-Network
+  - Double Q-Learning (DDQN)
   - Noisy Nets for exploration
   - Prioritized Experience Replay
   - Multi-step returns
