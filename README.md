@@ -1,6 +1,7 @@
 # Laser Hockey: Rainbow-DQN
 
 A Rainbow-DQN implementation for the [hockey-env](https://github.com/martius-lab/hockey-env) Gymnasium environment. This project demonstrates a modular reinforcement learning setup using Rainbow-DQN, including prioritized replay, multi-step learning, dueling networks, and noisy nets.
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)  
 
 ## Features
 
