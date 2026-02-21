@@ -24,3 +24,23 @@ Clone the repository and install dependencies:
 git clone https://github.com/fipsi22/laser-hockey.git
 cd laser-hockey
 pip install -r requirements.txt
+```
+
+## Quick Start
+
+### Training
+Execute the following command to initiate the training loop. All model configurations, environment settings, and hyperparameters are consolidated within the training script for ease of modification:
+```bash
+python3 /laser-hockey/rainbow/rainbow_train.py
+```
+### Evaluation
+To assess the performance of a saved agent against the scripted baselines, use the evaluation utility:
+```bash
+python3 /laser-hockey/rainbow/util/run_evaluation.py
+```
+For a head-to-head evaluation between multiple trained agents or different model checkpoints, execute the tournament script:
+```bash
+python3 /laser-hockey/rainbow/util/head_to_head_tournament.py
+```
+
+
