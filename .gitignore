@@ -207,3 +207,14 @@ marimo/_lsp/
 __marimo__/
 
 .idea
+
+rainbow/checkpoints/*
+rainbow/tournament/*
+checkpoints/*
+rainbow_train.sbatch
+results.json
+training_performance.png
+*.sbatch
+*.npy
+rainbow/analysis/head_to_head_tournament_group.py
+rainbow/rainbow_train_tune.py

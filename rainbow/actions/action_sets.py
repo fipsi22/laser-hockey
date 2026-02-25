@@ -25,7 +25,7 @@ def baseline_action_set():
 
 def compound_action_set():
     return [
-        DiscreteAction(),  # 0: idle
+        DiscreteAction(),  # idle
 
         # Cardinal movement
         DiscreteAction(dx=1.0),
@@ -33,22 +33,70 @@ def compound_action_set():
         DiscreteAction(dy=1.0),
         DiscreteAction(dy=-1.0),
 
-        # Diagonal movement (0.7 so magnitude is roughly 1)
-        DiscreteAction(dx=0.7, dy=0.7),
-        DiscreteAction(dx=0.7, dy=-0.7),
-        DiscreteAction(dx=-0.7, dy=0.7),
-        DiscreteAction(dx=-0.7, dy=-0.7),
+        # Diagonal (normalized)
+        DiscreteAction(dx=0.707, dy=0.707),
+        DiscreteAction(dx=0.707, dy=-0.707),
+        DiscreteAction(dx=-0.707, dy=0.707),
+        DiscreteAction(dx=-0.707, dy=-0.707),
+
+        # Diagonal (normalized) rotation
+        DiscreteAction(dx=0.707, dy=0.707, dtheta=1.0),
+        DiscreteAction(dx=0.707, dy=0.707, dtheta=-1.0),
+        DiscreteAction(dx=0.707, dy=-0.707, dtheta=1.0),
+        DiscreteAction(dx=0.707, dy=-0.707, dtheta=-1.0),
+        DiscreteAction(dx=-0.707, dy=0.707, dtheta=1.0),
+        DiscreteAction(dx=-0.707, dy=0.707, dtheta=-1.0),
+        DiscreteAction(dx=-0.707, dy=-0.707, dtheta=1.0),
+        DiscreteAction(dx=-0.707, dy=-0.707, dtheta=-1.0),
 
         # Rotation
-        DiscreteAction(dtheta=0.5),
-        DiscreteAction(dtheta=-0.5),
+        DiscreteAction(dtheta=1.0),
+        DiscreteAction(dtheta=-1.0),
 
-        # Compound movement + rotation
-        DiscreteAction(dx=1.0, dtheta=0.3),
-        DiscreteAction(dx=-1.0, dtheta=-0.3),
+        # Move + rotate
+        DiscreteAction(dx=1.0, dtheta=1),
+        DiscreteAction(dx=1.0, dtheta=-1),
+        DiscreteAction(dx=-1.0, dtheta=1),
+        DiscreteAction(dx=-1.0, dtheta=-1),
 
         # Shooting
         DiscreteAction(shoot=1.0),
+    ]
+
+
+def micro_movement_action_set():
+    return [
+        DiscreteAction(),  # idle
+
+        # Cardinal movement
+        DiscreteAction(dx=1.0),
+        DiscreteAction(dx=-1.0),
+        DiscreteAction(dy=1.0),
+        DiscreteAction(dy=-1.0),
+
+        # Micro movement
+        DiscreteAction(dx=0.5),
+        DiscreteAction(dx=-0.5),
+        DiscreteAction(dy=0.5),
+        DiscreteAction(dy=-0.5),
+
+        # Diagonal (normalized)
+        DiscreteAction(dx=0.707, dy=0.707),
+        DiscreteAction(dx=0.707, dy=-0.707),
+        DiscreteAction(dx=-0.707, dy=0.707),
+        DiscreteAction(dx=-0.707, dy=-0.707),
+
+        # Rotation
+        DiscreteAction(dtheta=1.0),
+        DiscreteAction(dtheta=-1.0),
+
+        # Move + rotate
+        DiscreteAction(dx=1.0, dtheta=0.3),
+        DiscreteAction(dx=1.0, dtheta=-0.3),
+        DiscreteAction(dx=-1.0, dtheta=0.3),
+        DiscreteAction(dx=-1.0, dtheta=-0.3),
+
+        # Shooting
         DiscreteAction(dx=0.8, shoot=1.0),
-        DiscreteAction(dtheta=0.4, shoot=1.0),
+        DiscreteAction(dtheta=0.5, shoot=1.0),
     ]
